@@ -26,7 +26,7 @@ def validate_username(username: str) -> str:
 class GitHubClient:
     def __init__(self) -> None:
         headers = {
-            "Accept": "application/vnd.github+json",
+            "Accept": "application/vnd.github+json, application/vnd.github.mercy-preview+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "gitanalyse/1.0",
         }

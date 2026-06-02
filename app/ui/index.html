@@ -270,7 +270,27 @@
             ${metric("Median Stars / Repo", repoStats.median_stars_per_repo)}
             ${metric("Avg Forks / Repo", repoStats.average_forks_per_repo)}
             ${metric("Updated in Last 90 Days", repoStats.recently_updated_count_90d)}
+            ${metric("License Coverage %", repoStats.repositories_with_license_percent)}
+            ${metric("Description Coverage %", repoStats.repositories_with_description_percent)}
+            ${metric("Topic Coverage %", repoStats.repositories_with_topics_percent)}
+            ${metric("Stale Repos (>180d)", repoStats.stale_repositories_180d_count)}
+            ${metric("Avg Open Issues / Repo", repoStats.average_open_issues_per_repo)}
           </div>
+        </section>
+
+        <section class="section">
+          <h2>Language and Domain Intelligence</h2>
+          <div class="grid">
+            ${metric("Primary Domain", repoStats.primary_domain ? repoStats.primary_domain.replaceAll("_", " ") : "-")}
+            ${metric("Domain Confidence %", repoStats.domain_confidence_percent)}
+            ${metric("Primary Language", repoStats.primary_language || "-")}
+            ${metric("Languages Used", repoStats.languages_used_count)}
+          </div>
+          ${Object.keys(repoStats.domain_breakdown || {}).length
+            ? `<ul class="list">${Object.entries(repoStats.domain_breakdown).map(([domain, score]) =>
+                `<li><strong>${escapeHtml(domain.replaceAll("_", " "))}</strong>: ${escapeHtml(formatNumber(score))}%</li>`
+              ).join("")}</ul>`
+            : '<div class="hint">Domain signals are limited for this profile.</div>'}
         </section>
 
         <section class="section">
@@ -289,6 +309,7 @@
                 `<li>
                   <strong>${escapeHtml(repo.name)}</strong> — ⭐ ${escapeHtml(formatNumber(repo.stars))}
                   ${repo.language ? ` — ${escapeHtml(repo.language)}` : ""}
+                  ${repo.quality_score !== undefined ? ` — Quality ${escapeHtml(formatNumber(repo.quality_score))}` : ""}
                 </li>`
               ).join("")}</ul>`
             : '<div class="hint">No public repositories found.</div>'}

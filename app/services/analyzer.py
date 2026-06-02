@@ -17,6 +17,91 @@ from app.schemas import (
 )
 from app.services.github import GitHubClient, validate_username
 
+DOMAIN_KEYWORDS: dict[str, set[str]] = {
+    "web_development": {
+        "react",
+        "vue",
+        "angular",
+        "next",
+        "frontend",
+        "tailwind",
+        "html",
+        "css",
+        "web",
+    },
+    "backend_api": {
+        "api",
+        "backend",
+        "server",
+        "fastapi",
+        "django",
+        "flask",
+        "spring",
+        "node",
+        "express",
+        "microservice",
+    },
+    "data_ai": {
+        "ml",
+        "ai",
+        "llm",
+        "tensorflow",
+        "pytorch",
+        "data",
+        "pandas",
+        "numpy",
+        "computer-vision",
+        "nlp",
+    },
+    "devops_cloud": {
+        "docker",
+        "kubernetes",
+        "terraform",
+        "aws",
+        "gcp",
+        "azure",
+        "devops",
+        "ci",
+        "cd",
+        "helm",
+    },
+    "mobile": {
+        "android",
+        "ios",
+        "flutter",
+        "react-native",
+        "swift",
+        "kotlin",
+        "mobile",
+    },
+    "security": {
+        "security",
+        "cryptography",
+        "pentest",
+        "vulnerability",
+        "auth",
+        "jwt",
+        "encryption",
+    },
+}
+
+LANGUAGE_DOMAIN_HINTS: dict[str, str] = {
+    "typescript": "web_development",
+    "javascript": "web_development",
+    "html": "web_development",
+    "css": "web_development",
+    "python": "data_ai",
+    "jupyter notebook": "data_ai",
+    "go": "backend_api",
+    "java": "backend_api",
+    "c#": "backend_api",
+    "rust": "backend_api",
+    "kotlin": "mobile",
+    "swift": "mobile",
+    "hcl": "devops_cloud",
+    "dockerfile": "devops_cloud",
+}
+
 
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
@@ -136,6 +221,12 @@ class ProfileAnalyzerService:
 
         sorted_by_stars = sorted(repo_summaries, key=lambda r: r.stars, reverse=True)
         most_starred = sorted_by_stars[0] if sorted_by_stars and sorted_by_stars[0].stars > 0 else None
+        quality_summary = self._build_repo_quality_summary(repo_summaries, repos, now)
+        domain_analysis = self._build_domain_analysis(
+            repo_summaries=repo_summaries,
+            repos=repos,
+            language_breakdown=language_breakdown,
+        )
 
         sorted_by_created = sorted(
             [r for r in repo_summaries if r.created_at],
@@ -169,6 +260,18 @@ class ProfileAnalyzerService:
             recently_created_count_365d=recent_365d_created,
             oldest_repo_name=sorted_by_created[0].name if sorted_by_created else None,
             newest_repo_name=sorted_by_created[-1].name if sorted_by_created else None,
+            repositories_with_license_percent=quality_summary["repositories_with_license_percent"],
+            repositories_with_description_percent=quality_summary["repositories_with_description_percent"],
+            repositories_with_homepage_percent=quality_summary["repositories_with_homepage_percent"],
+            repositories_with_wiki_percent=quality_summary["repositories_with_wiki_percent"],
+            repositories_with_topics_percent=quality_summary["repositories_with_topics_percent"],
+            archived_repositories_count=quality_summary["archived_repositories_count"],
+            disabled_repositories_count=quality_summary["disabled_repositories_count"],
+            stale_repositories_180d_count=quality_summary["stale_repositories_180d_count"],
+            average_open_issues_per_repo=quality_summary["average_open_issues_per_repo"],
+            primary_domain=domain_analysis["primary_domain"],
+            domain_confidence_percent=domain_analysis["domain_confidence_percent"],
+            domain_breakdown=domain_analysis["domain_breakdown"],
         )
 
         most_starred_repo = None
@@ -192,6 +295,8 @@ class ProfileAnalyzerService:
             repo_stats=repo_stats,
             language_breakdown=language_breakdown,
             repo_summaries=repo_summaries,
+            domain_analysis=domain_analysis,
+            quality_summary=quality_summary,
         )
 
         top_repos = sorted_by_stars[:5]
@@ -223,19 +328,147 @@ class ProfileAnalyzerService:
         }
 
     def _repo_summary(self, repo: dict[str, Any]) -> RepositorySummary:
+        has_description = bool((repo.get("description") or "").strip())
+        has_license = bool(repo.get("license") and repo["license"].get("spdx_id"))
+        has_homepage = bool((repo.get("homepage") or "").strip())
+        has_wiki = bool(repo.get("has_wiki", False))
+        stars = repo.get("stargazers_count", 0)
+        forks = repo.get("forks_count", 0)
+        watchers = repo.get("watchers_count", 0)
+        topics = repo.get("topics") or []
+        open_issues_count = repo.get("open_issues_count", 0)
+        quality_score = round(
+            (
+                (1.0 if has_description else 0.0)
+                + (1.0 if has_license else 0.0)
+                + (1.0 if has_homepage else 0.0)
+                + (1.0 if has_wiki else 0.0)
+                + (1.0 if topics else 0.0)
+                + min(stars / 100, 1.0)
+                + min((watchers + forks) / 200, 1.0)
+                - min(open_issues_count / 200, 0.5)
+            )
+            / 6.5
+            * 100
+        , 1)
         return RepositorySummary(
             name=repo["name"],
             full_name=repo["full_name"],
             url=repo["html_url"],
             description=repo.get("description"),
-            stars=repo.get("stargazers_count", 0),
-            forks=repo.get("forks_count", 0),
+            stars=stars,
+            forks=forks,
             language=repo.get("language"),
             is_fork=repo.get("fork", False),
             created_at=_parse_dt(repo.get("created_at")),
             updated_at=_parse_dt(repo.get("updated_at")),
             pushed_at=_parse_dt(repo.get("pushed_at")),
+            topics=topics if isinstance(topics, list) else [],
+            has_description=has_description,
+            has_license=has_license,
+            has_homepage=has_homepage,
+            has_wiki=has_wiki,
+            open_issues_count=open_issues_count,
+            quality_score=max(0.0, min(100.0, quality_score)),
         )
+
+    def _build_repo_quality_summary(
+        self,
+        repo_summaries: list[RepositorySummary],
+        repos_raw: list[dict[str, Any]],
+        now: datetime,
+    ) -> dict[str, float | int]:
+        total = len(repo_summaries)
+        if total == 0:
+            return {
+                "repositories_with_license_percent": 0.0,
+                "repositories_with_description_percent": 0.0,
+                "repositories_with_homepage_percent": 0.0,
+                "repositories_with_wiki_percent": 0.0,
+                "repositories_with_topics_percent": 0.0,
+                "archived_repositories_count": 0,
+                "disabled_repositories_count": 0,
+                "stale_repositories_180d_count": 0,
+                "average_open_issues_per_repo": 0.0,
+            }
+
+        stale_180d = sum(
+            1
+            for r in repo_summaries
+            if not r.pushed_at or _days_between(r.pushed_at, now) > 180
+        )
+
+        return {
+            "repositories_with_license_percent": round(
+                sum(1 for r in repo_summaries if r.has_license) / total * 100, 1
+            ),
+            "repositories_with_description_percent": round(
+                sum(1 for r in repo_summaries if r.has_description) / total * 100, 1
+            ),
+            "repositories_with_homepage_percent": round(
+                sum(1 for r in repo_summaries if r.has_homepage) / total * 100, 1
+            ),
+            "repositories_with_wiki_percent": round(
+                sum(1 for r in repo_summaries if r.has_wiki) / total * 100, 1
+            ),
+            "repositories_with_topics_percent": round(
+                sum(1 for r in repo_summaries if r.topics) / total * 100, 1
+            ),
+            "archived_repositories_count": sum(1 for repo in repos_raw if repo.get("archived")),
+            "disabled_repositories_count": sum(1 for repo in repos_raw if repo.get("disabled")),
+            "stale_repositories_180d_count": stale_180d,
+            "average_open_issues_per_repo": round(
+                statistics.mean([r.open_issues_count for r in repo_summaries]), 2
+            ),
+        }
+
+    def _build_domain_analysis(
+        self,
+        *,
+        repo_summaries: list[RepositorySummary],
+        repos: list[dict[str, Any]],
+        language_breakdown: dict[str, int],
+    ) -> dict[str, Any]:
+        scores = {domain: 0.0 for domain in DOMAIN_KEYWORDS}
+
+        for language, count in language_breakdown.items():
+            domain = LANGUAGE_DOMAIN_HINTS.get(language.lower())
+            if domain:
+                scores[domain] += count * 2.0
+
+        for repo_summary, repo_raw in zip(repo_summaries, repos):
+            text_parts = [
+                repo_summary.name,
+                repo_summary.full_name,
+                repo_summary.description or "",
+                " ".join(repo_summary.topics),
+                (repo_raw.get("homepage") or ""),
+            ]
+            corpus = " ".join(text_parts).lower()
+            repo_weight = 1.0 + min(repo_summary.stars / 1000, 2.5)
+
+            for domain, keywords in DOMAIN_KEYWORDS.items():
+                matches = sum(1 for keyword in keywords if keyword in corpus)
+                if matches:
+                    scores[domain] += matches * repo_weight
+
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        top_score = ranked[0][1] if ranked else 0.0
+        total_score = sum(scores.values())
+        primary_domain = ranked[0][0] if top_score > 0 else None
+        confidence = round((top_score / total_score * 100), 1) if total_score > 0 else 0.0
+
+        breakdown = {
+            key: round((value / total_score * 100), 1)
+            for key, value in ranked
+            if total_score > 0 and value > 0
+        }
+
+        return {
+            "primary_domain": primary_domain,
+            "domain_confidence_percent": confidence,
+            "domain_breakdown": breakdown,
+        }
 
     def _generate_insights(
         self,
@@ -249,6 +482,8 @@ class ProfileAnalyzerService:
         repo_stats: RepositoryStats,
         language_breakdown: dict[str, int],
         repo_summaries: list[RepositorySummary],
+        domain_analysis: dict[str, Any],
+        quality_summary: dict[str, float | int],
     ) -> list[ProfileInsight]:
         insights: list[ProfileInsight] = []
 
@@ -422,6 +657,46 @@ class ProfileAnalyzerService:
                     title="Profile completeness",
                     description="Bio is present — profile appears intentionally maintained.",
                     severity="positive",
+                )
+            )
+
+        if repo_stats.primary_domain:
+            breakdown = domain_analysis.get("domain_breakdown", {})
+            top_domains = list(breakdown.items())[:3]
+            domain_readout = ", ".join(
+                f"{name.replace('_', ' ')} ({score:.1f}%)" for name, score in top_domains
+            )
+            insights.append(
+                ProfileInsight(
+                    category="domain_intelligence",
+                    title="Domain specialization",
+                    description=(
+                        f"Primary domain appears to be {repo_stats.primary_domain.replace('_', ' ')} "
+                        f"with {repo_stats.domain_confidence_percent:.1f}% confidence. "
+                        f"Signals: {domain_readout or 'insufficient domain signals'}."
+                    ),
+                    severity="info",
+                )
+            )
+
+        license_pct = float(quality_summary["repositories_with_license_percent"])
+        docs_pct = float(quality_summary["repositories_with_description_percent"])
+        stale_count = int(quality_summary["stale_repositories_180d_count"])
+        if repo_stats.total_repositories > 0:
+            insights.append(
+                ProfileInsight(
+                    category="repo_quality",
+                    title="Repository quality signals",
+                    description=(
+                        f"License coverage: {license_pct:.1f}%, descriptions: {docs_pct:.1f}%, "
+                        f"stale repos (>180d): {stale_count}/{repo_stats.total_repositories}, "
+                        f"avg open issues/repo: {repo_stats.average_open_issues_per_repo:.2f}."
+                    ),
+                    severity=(
+                        "positive"
+                        if license_pct >= 60 and stale_count <= max(1, repo_stats.total_repositories // 2)
+                        else "neutral"
+                    ),
                 )
             )
 

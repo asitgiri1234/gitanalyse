@@ -6,6 +6,8 @@ Backend service that analyzes public GitHub user profiles, generates actionable 
 
 - **Cache-first analysis** — stored profiles are returned instantly without calling GitHub again
 - **Rich metrics** — followers, repos, stars, account age, language breakdown, repository statistics
+- **Language + domain intelligence** — predicts primary engineering domain from repo topics, metadata, and language signals
+- **Repo quality signals** — license/description/wiki/homepage coverage, stale project ratio, and per-repo quality scoring
 - **Generated insights** — tenure, impact, activity, portfolio style, and community signals
 - **Graceful errors** — invalid usernames, missing users, rate limits, and API failures
 

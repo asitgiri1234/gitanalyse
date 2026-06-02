@@ -16,6 +16,13 @@ class RepositorySummary(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     pushed_at: datetime | None = None
+    topics: list[str] = Field(default_factory=list)
+    has_description: bool = False
+    has_license: bool = False
+    has_homepage: bool = False
+    has_wiki: bool = False
+    open_issues_count: int = 0
+    quality_score: float = 0.0
 
 
 class RepositoryStats(BaseModel):
@@ -34,6 +41,18 @@ class RepositoryStats(BaseModel):
     recently_created_count_365d: int
     oldest_repo_name: str | None = None
     newest_repo_name: str | None = None
+    repositories_with_license_percent: float = 0.0
+    repositories_with_description_percent: float = 0.0
+    repositories_with_homepage_percent: float = 0.0
+    repositories_with_wiki_percent: float = 0.0
+    repositories_with_topics_percent: float = 0.0
+    archived_repositories_count: int = 0
+    disabled_repositories_count: int = 0
+    stale_repositories_180d_count: int = 0
+    average_open_issues_per_repo: float = 0.0
+    primary_domain: str | None = None
+    domain_confidence_percent: float = 0.0
+    domain_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class MostStarredRepository(BaseModel):
