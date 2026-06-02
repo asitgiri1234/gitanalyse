@@ -1,8 +1,8 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.database import init_db
 from app.exceptions import AppError
@@ -43,8 +43,37 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+_INLINE_ROOT_HTML = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GitAnalyse</title>
+  </head>
+  <body style="font-family: Arial, sans-serif; margin: 2rem;">
+    <h1>GitAnalyse API is live</h1>
+    <p>If the rich UI could not be loaded, use these endpoints directly:</p>
+    <ul>
+      <li><a href="/docs">/docs</a></li>
+      <li><a href="/health">/health</a></li>
+      <li><code>POST /api/profiles/analyze</code></li>
+      <li><code>GET /api/profiles/{username}</code></li>
+    </ul>
+  </body>
+</html>
+"""
+
+
 @app.get("/", include_in_schema=False)
-def root() -> FileResponse:
-    # Simple single-page UI for analyzing usernames quickly.
+def root() -> Response:
+    # Render an HTML UI if present; otherwise provide an inline fallback page.
     ui_path = Path(__file__).resolve().parent / "ui" / "index.html"
-    return FileResponse(ui_path)
+    if ui_path.exists():
+        return FileResponse(ui_path)
+    return HTMLResponse(content=_INLINE_ROOT_HTML, status_code=200)
+
+
+@app.get("/index.html", include_in_schema=False)
+def root_index() -> Response:
+    return root()
