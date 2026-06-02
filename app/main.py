@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.database import init_db
 from app.exceptions import AppError
@@ -40,3 +41,10 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 @app.get("/health", tags=["health"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+def root() -> FileResponse:
+    # Simple single-page UI for analyzing usernames quickly.
+    ui_path = Path(__file__).resolve().parent / "ui" / "index.html"
+    return FileResponse(ui_path)
