@@ -1,6 +1,6 @@
 # GitAnalyse
 
-Backend service that analyzes public GitHub user profiles, generates actionable insights, and caches results in SQLite so repeat lookups avoid unnecessary GitHub API calls.
+Backend service that analyzes public GitHub user profiles, generates actionable insights, and caches results in a database so repeat lookups avoid unnecessary GitHub API calls.
 
 ## Features
 
@@ -54,6 +54,51 @@ curl -X POST http://127.0.0.1:8000/api/profiles/analyze \
 |----------|---------|-------------|
 | `GITHUB_TOKEN` | — | Personal access token (raises rate limit to 5000/hr) |
 | `DATABASE_URL` | `sqlite:///./data/gitanalyse.db` | SQLAlchemy database URL |
+
+## Deploy to Render (Web Service + PostgreSQL)
+
+This repository includes a `render.yaml` blueprint and `Procfile` for one-click Render setup.
+
+### 1) Push latest code to GitHub
+
+Render deploys directly from your GitHub repository.
+
+### 2) Create services in Render
+
+- In Render dashboard, choose **New +** -> **Blueprint**.
+- Select this repository and deploy.
+- Render will provision:
+  - `gitanalyse-api` (Python Web Service)
+  - `gitanalyse-db` (PostgreSQL)
+
+### 3) Set environment variables
+
+`DATABASE_URL` is automatically wired from Render Postgres via `render.yaml`.
+Set `GITHUB_TOKEN` manually in the web service environment variables:
+
+- Key: `GITHUB_TOKEN`
+- Value: your GitHub personal access token
+
+### 4) Build/start settings (already configured)
+
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Health check path: `/health`
+
+### 5) Verify deployment
+
+- Open `https://<your-render-domain>/health` (should return `{"status":"ok"}`)
+- Open `https://<your-render-domain>/`
+- Search a username:
+  - First run usually returns `cached: false`
+  - Re-running same username should return `cached: true`
+- Test invalid username and confirm friendly error message.
+
+### Notes
+
+- Local development can still use SQLite (`sqlite:///./data/gitanalyse.db`).
+- Production should use Postgres (`DATABASE_URL` from Render).
+- Never commit `.env` or token values.
 
 ## Project structure
 
