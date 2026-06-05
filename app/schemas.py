@@ -124,6 +124,23 @@ class ProfileListResponse(BaseModel):
     profiles: list[ProfileListItem]
 
 
+class UserSuggestion(BaseModel):
+    username: str
+    name: str | None = None
+    avatar_url: str | None = None
+    profile_url: str | None = None
+    source: str = Field(
+        description="cache | github",
+        default="github",
+    )
+
+
+class UserSuggestionResponse(BaseModel):
+    query: str
+    total: int
+    suggestions: list[UserSuggestion]
+
+
 class AnalyzeRequest(BaseModel):
     username: str = Field(
         min_length=1,

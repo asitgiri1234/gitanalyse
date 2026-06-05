@@ -1,5 +1,6 @@
 import re
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -85,3 +86,15 @@ class GitHubClient:
             page += 1
 
         return repos
+
+    async def search_users(self, query: str, *, per_page: int = 8) -> list[dict[str, Any]]:
+        encoded = quote(query.strip(), safe="")
+        data = await self._request(
+            f"/search/users?q={encoded}&per_page={per_page}"
+        )
+        if not data or not isinstance(data, dict):
+            return []
+        items = data.get("items")
+        if not isinstance(items, list):
+            return []
+        return [item for item in items if isinstance(item, dict)]

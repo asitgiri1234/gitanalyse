@@ -3,6 +3,7 @@ import statistics
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.exceptions import AnalysisNotFoundError, InvalidUsernameError
@@ -14,6 +15,7 @@ from app.schemas import (
     ProfileListItem,
     RepositoryStats,
     RepositorySummary,
+    UserSuggestion,
 )
 from app.services.github import GitHubClient, validate_username
 
@@ -148,6 +150,69 @@ class ProfileAnalyzerService:
             )
             for r in rows
         ]
+
+    def _search_cached_suggestions(self, query: str, limit: int) -> list[UserSuggestion]:
+        pattern = f"%{query.lower()}%"
+        rows = (
+            self.db.query(ProfileAnalysis)
+            .filter(
+                or_(
+                    func.lower(ProfileAnalysis.username).like(pattern),
+                    func.lower(ProfileAnalysis.name).like(pattern),
+                )
+            )
+            .order_by(ProfileAnalysis.analyzed_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            UserSuggestion(
+                username=r.username,
+                name=r.name,
+                avatar_url=r.avatar_url,
+                profile_url=r.profile_url,
+                source="cache",
+            )
+            for r in rows
+        ]
+
+    async def search_suggestions(self, query: str, limit: int = 8) -> list[UserSuggestion]:
+        cleaned = query.strip().lstrip("@")
+        if len(cleaned) < 2:
+            return []
+
+        capped = max(1, min(limit, 20))
+        suggestions = self._search_cached_suggestions(cleaned, capped)
+        seen = {s.username.lower() for s in suggestions}
+
+        remaining = capped - len(suggestions)
+        if remaining > 0:
+            try:
+                github_items = await self.github.search_users(cleaned, per_page=remaining)
+            except Exception:
+                github_items = []
+
+            for item in github_items:
+                login = item.get("login")
+                if not isinstance(login, str) or not login:
+                    continue
+                normalized = login.lower()
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                suggestions.append(
+                    UserSuggestion(
+                        username=login,
+                        name=None,
+                        avatar_url=item.get("avatar_url"),
+                        profile_url=item.get("html_url"),
+                        source="github",
+                    )
+                )
+                if len(suggestions) >= capped:
+                    break
+
+        return suggestions
 
     async def analyze(
         self,

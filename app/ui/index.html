@@ -50,8 +50,13 @@
       gap: 10px;
       flex-wrap: wrap;
     }
-    input[type="text"] {
+    .search-wrapper {
+      position: relative;
       flex: 1 1 320px;
+    }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
       border-radius: 10px;
       border: 1px solid rgba(255, 255, 255, 0.2);
       background: rgba(255, 255, 255, 0.06);
@@ -166,6 +171,73 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .suggestions {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      margin: 0;
+      padding: 6px;
+      list-style: none;
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+      max-height: 280px;
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .suggestions.hidden {
+      display: none;
+    }
+    .suggestion-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .suggestion-item:hover,
+    .suggestion-item.active {
+      background: rgba(79, 140, 255, 0.18);
+    }
+    .suggestion-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .suggestion-meta {
+      min-width: 0;
+      flex: 1;
+    }
+    .suggestion-username {
+      font-weight: 600;
+      line-height: 1.2;
+    }
+    .suggestion-name {
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .suggestion-badge {
+      font-size: 0.68rem;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 6px;
+      flex-shrink: 0;
+    }
+    .suggestion-empty {
+      padding: 10px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
@@ -175,7 +247,19 @@
       Paste a GitHub username. The result is shown as JSON and cached in your database automatically.
     </p>
     <div class="controls">
-      <input id="username" type="text" placeholder="e.g. asitgiri1234" autocomplete="off" />
+      <div class="search-wrapper">
+        <input
+          id="username"
+          type="text"
+          placeholder="e.g. asitgiri1234"
+          autocomplete="off"
+          role="combobox"
+          aria-expanded="false"
+          aria-controls="suggestions"
+          aria-autocomplete="list"
+        />
+        <ul id="suggestions" class="suggestions hidden" role="listbox"></ul>
+      </div>
       <button id="analyzeBtn" type="button">Analyze</button>
     </div>
     <div id="status" class="status"></div>
@@ -192,6 +276,14 @@
     const analyzeBtn = document.getElementById("analyzeBtn");
     const statusEl = document.getElementById("status");
     const resultEl = document.getElementById("result");
+    const suggestionsEl = document.getElementById("suggestions");
+
+    const SUGGEST_MIN_CHARS = 2;
+    const SUGGEST_DEBOUNCE_MS = 300;
+    let suggestTimer = null;
+    let suggestAbortController = null;
+    let activeSuggestionIndex = -1;
+    let currentSuggestions = [];
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message || "";
@@ -334,6 +426,118 @@
       `;
     }
 
+    function hideSuggestions() {
+      suggestionsEl.classList.add("hidden");
+      suggestionsEl.innerHTML = "";
+      usernameInput.setAttribute("aria-expanded", "false");
+      activeSuggestionIndex = -1;
+      currentSuggestions = [];
+    }
+
+    function renderSuggestions(suggestions) {
+      currentSuggestions = suggestions;
+      activeSuggestionIndex = -1;
+
+      if (!suggestions.length) {
+        suggestionsEl.innerHTML = '<li class="suggestion-empty">No matching users found.</li>';
+        suggestionsEl.classList.remove("hidden");
+        usernameInput.setAttribute("aria-expanded", "true");
+        return;
+      }
+
+      suggestionsEl.innerHTML = suggestions.map((item, index) => {
+        const badge = item.source === "cache" ? "cached" : "github";
+        const avatar = item.avatar_url
+          ? `<img class="suggestion-avatar" src="${escapeHtml(item.avatar_url)}" alt="" />`
+          : '<div class="suggestion-avatar"></div>';
+        const displayName = item.name
+          ? `<div class="suggestion-name">${escapeHtml(item.name)}</div>`
+          : "";
+
+        return `
+          <li
+            class="suggestion-item"
+            role="option"
+            data-index="${index}"
+            data-username="${escapeHtml(item.username)}"
+          >
+            ${avatar}
+            <div class="suggestion-meta">
+              <div class="suggestion-username">@${escapeHtml(item.username)}</div>
+              ${displayName}
+            </div>
+            <span class="suggestion-badge">${escapeHtml(badge)}</span>
+          </li>
+        `;
+      }).join("");
+
+      suggestionsEl.classList.remove("hidden");
+      usernameInput.setAttribute("aria-expanded", "true");
+    }
+
+    function setActiveSuggestion(index) {
+      const items = suggestionsEl.querySelectorAll(".suggestion-item");
+      if (!items.length) {
+        activeSuggestionIndex = -1;
+        return;
+      }
+
+      activeSuggestionIndex = Math.max(0, Math.min(index, items.length - 1));
+      items.forEach((item, itemIndex) => {
+        item.classList.toggle("active", itemIndex === activeSuggestionIndex);
+      });
+      items[activeSuggestionIndex].scrollIntoView({ block: "nearest" });
+    }
+
+    function selectSuggestion(username) {
+      usernameInput.value = username;
+      hideSuggestions();
+      analyze();
+    }
+
+    async function fetchSuggestions(query) {
+      if (suggestAbortController) {
+        suggestAbortController.abort();
+      }
+
+      suggestAbortController = new AbortController();
+
+      try {
+        const response = await fetch(
+          `/api/profiles/suggest?q=${encodeURIComponent(query)}&limit=8`,
+          { signal: suggestAbortController.signal }
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          hideSuggestions();
+          return;
+        }
+
+        renderSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []);
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          hideSuggestions();
+        }
+      }
+    }
+
+    function scheduleSuggestions() {
+      if (suggestTimer) {
+        clearTimeout(suggestTimer);
+      }
+
+      const query = (usernameInput.value || "").trim();
+      if (query.length < SUGGEST_MIN_CHARS) {
+        hideSuggestions();
+        return;
+      }
+
+      suggestTimer = setTimeout(() => {
+        fetchSuggestions(query);
+      }, SUGGEST_DEBOUNCE_MS);
+    }
+
     async function analyze() {
       const username = (usernameInput.value || "").trim();
       if (!username) {
@@ -341,6 +545,7 @@
         return;
       }
 
+      hideSuggestions();
       analyzeBtn.disabled = true;
       setStatus("Analyzing...");
 
@@ -372,9 +577,49 @@
     }
 
     analyzeBtn.addEventListener("click", analyze);
+    usernameInput.addEventListener("input", scheduleSuggestions);
     usernameInput.addEventListener("keydown", (event) => {
+      const isDropdownOpen = !suggestionsEl.classList.contains("hidden");
+
+      if (event.key === "ArrowDown" && isDropdownOpen) {
+        event.preventDefault();
+        setActiveSuggestion(activeSuggestionIndex + 1);
+        return;
+      }
+
+      if (event.key === "ArrowUp" && isDropdownOpen) {
+        event.preventDefault();
+        setActiveSuggestion(activeSuggestionIndex <= 0 ? 0 : activeSuggestionIndex - 1);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        hideSuggestions();
+        return;
+      }
+
       if (event.key === "Enter") {
+        if (isDropdownOpen && activeSuggestionIndex >= 0 && currentSuggestions[activeSuggestionIndex]) {
+          event.preventDefault();
+          selectSuggestion(currentSuggestions[activeSuggestionIndex].username);
+          return;
+        }
         analyze();
+      }
+    });
+
+    suggestionsEl.addEventListener("mousedown", (event) => {
+      const item = event.target.closest(".suggestion-item");
+      if (!item) {
+        return;
+      }
+      event.preventDefault();
+      selectSuggestion(item.dataset.username || "");
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".search-wrapper")) {
+        hideSuggestions();
       }
     });
   </script>
